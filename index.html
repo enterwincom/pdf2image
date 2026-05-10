@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>PDF to Image</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        :root {
+            --primary: #ef4444;
+            --primary-dark: #dc2626;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+            --text: #0f172a;
+            --text-light: #64748b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        body {
+            font-family: 'Pretendard', -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .app-container {
+            width: 100%;
+            max-width: 600px;
+            background: var(--card);
+            border-radius: 24px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            padding: 40px 30px;
+            align-self: flex-start;
+        }
+
+        header { text-align: center; margin-bottom: 35px; }
+        header h1 { font-size: 2.2rem; color: var(--primary); font-weight: 800; margin-bottom: 8px; }
+        header p { color: var(--text-light); font-size: 1rem; }
+
+        /* 드롭존 */
+        #drop-zone {
+            border: 2px dashed #cbd5e1;
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 50px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.3s;
+            margin-bottom: 30px;
+        }
+        #drop-zone:hover, #drop-zone.dragover { background: #fef2f2; border-color: var(--primary); }
+        .file-info { margin-top: 10px; font-weight: 600; color: var(--primary); }
+
+        /* 설정창 */
+        .settings-card {
+            background: #f1f5f9;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        .setting-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .setting-group label {
+            font-weight: 700;
+            font-size: 0.9rem;
+            color: var(--text);
+        }
+        .custom-select {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: white;
+            font-size: 1rem;
+            font-weight: 500;
+            outline: none;
+            cursor: pointer;
+        }
+
+        /* 실행 버튼 */
+        #convertBtn {
+            width: 100%;
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 18px;
+            border-radius: 16px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.3);
+            transition: 0.3s;
+        }
+        #convertBtn:hover { background: var(--primary-dark); transform: translateY(-2px); }
+        #convertBtn:disabled { background: #cbd5e1; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        #status { margin-top: 20px; text-align: center; font-weight: 600; color: var(--primary); }
+
+        /* 미리보기 공간 */
+        #preview-area {
+            margin-top: 40px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 15px;
+        }
+        .preview-card {
+            background: #eee;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .preview-card img { width: 100%; height: auto; display: block; }
+
+        @media (max-width: 480px) {
+            .app-container { padding: 30px 20px; }
+            header h1 { font-size: 1.8rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <header>
+        <h1>PDF to Image</h1>
+        <p>Quick & Easy Grid Maker</p>
+    </header>
+
+    <div id="drop-zone" onclick="document.getElementById('pdfInput').click()">
+        <p id="file-label">PDF 파일을 드래그하거나 클릭하여 업로드</p>
+        <div id="file-info" class="file-info"></div>
+        <input type="file" id="pdfInput" accept="application/pdf" style="display: none;">
+    </div>
+
+    <div class="settings-card">
+        <div class="setting-group">
+            <label>이미지 품질 (DPI 설정)</label>
+            <select id="dpi-select" class="custom-select">
+                <option value="original">원본 DPI 유지</option>
+                <option value="72">72</option>
+                <option value="96">96</option>
+                <option value="120">120</option>
+                <option value="150">150</option>
+                <option value="300" selected>300</option>
+                <option value="450">450</option>
+                <option value="600">600</option>
+            </select>
+        </div>
+    </div>
+
+    <button id="convertBtn" onclick="processPDF()" disabled>이미지 변환 및 다운로드</button>
+    <div id="status"></div>
+
+    <div id="preview-area"></div>
+</div>
+
+<script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    let pdfData = null;
+    let fileName = "converted";
+
+    const pdfInput = document.getElementById('pdfInput');
+    const dropZone = document.getElementById('drop-zone');
+    const convertBtn = document.getElementById('convertBtn');
+    const status = document.getElementById('status');
+    const fileInfo = document.getElementById('file-info');
+    const fileLabel = document.getElementById('file-label');
+
+    // 드래그 앤 드롭 로직
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+
+    pdfInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+    function handleFile(file) {
+        if (file.type !== 'application/pdf') return alert('PDF 파일만 가능합니다.');
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            pdfData = new Uint8Array(e.target.result);
+            fileName = file.name.replace(/\.[^/.]+$/, "");
+            fileLabel.style.display = 'none';
+            fileInfo.innerText = `📄 ${file.name}`;
+            convertBtn.disabled = false;
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    async function processPDF() {
+        const dpiValue = document.getElementById('dpi-select').value;
+        // PDF.js 기본 72DPI 기준 배율 계산 (원본 유지 선택 시 144DPI인 2배로 설정)
+        const scale = (dpiValue === 'original') ? 2 : parseInt(dpiValue) / 72;
+        
+        convertBtn.disabled = true;
+        status.innerText = "변환을 시작합니다...";
+        const previewArea = document.getElementById('preview-area');
+        previewArea.innerHTML = '';
+
+        try {
+            const pdf = await pdfjsLib.getDocument({data: pdfData}).promise;
+            const zip = new JSZip();
+            
+            for (let i = 1; i <= pdf.numPages; i++) {
+                status.innerText = `진행 중: ${i} / ${pdf.numPages} 페이지`;
+                
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: scale });
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+                
+                const dataUrl = canvas.toDataURL('image/png');
+                zip.file(`${fileName}_${i}.png`, dataUrl.split(',')[1], {base64: true});
+
+                // 미리보기 생성
+                const div = document.createElement('div');
+                div.className = 'preview-card';
+                const img = document.createElement('img');
+                img.src = dataUrl;
+                div.appendChild(img);
+                previewArea.appendChild(div);
+            }
+
+            status.innerText = "ZIP 파일 생성 중...";
+            const content = await zip.generateAsync({type: "blob"});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(content);
+            link.download = `${fileName}_images.zip`;
+            link.click();
+            
+            status.innerText = "✅ 모든 작업이 완료되었습니다!";
+        } catch (err) {
+            console.error(err);
+            alert("변환 중 오류가 발생했습니다.");
+        } finally {
+            convertBtn.disabled = false;
+        }
+    }
+</script>
+
+</body>
+</html>
